@@ -264,7 +264,23 @@ class Path(pathlib.PurePath):
         full_match = _wrap_method(pathlib.Path.full_match)
 
     def as_uri(self) -> str:
-        return self._wrapped_cls(self).as_uri()
+        if not self.is_absolute():
+            raise ValueError("relative path can't be expressed as a file URI")
+
+        drive = self.drive
+        if len(drive) == 2 and drive[1] == ":":
+            prefix = "file:///" + drive
+            path = self.as_posix()[2:]
+        elif drive:
+            prefix = "file:"
+            path = self.as_posix()
+        else:
+            prefix = "file://"
+            path = str(self)
+
+        from urllib.parse import quote_from_bytes
+
+        return prefix + quote_from_bytes(os.fsencode(path))
 
 
 if Path.relative_to.__doc__:  # pragma: no branch

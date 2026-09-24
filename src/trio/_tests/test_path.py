@@ -230,10 +230,37 @@ async def test_globmethods(path: trio.Path) -> None:
     assert entries == {"_bar.txt", "bar.txt"}
 
 
-async def test_as_uri(path: trio.Path) -> None:
-    path = await path.parent.resolve()
+@pytest.mark.parametrize(
+    ("path", "uri"),
+    [
+        (
+            trio.PosixPath("/foo bar/#?%"),
+            "file:///foo%20bar/%23%3F%25",
+        ),
+        (
+            trio.WindowsPath("C:/foo bar/#?%"),
+            "file:///C:/foo%20bar/%23%3F%25",
+        ),
+        (
+            trio.WindowsPath("//server/share/a b"),
+            "file://server/share/a%20b",
+        ),
+    ],
+)
+def test_as_uri(path: trio.Path, uri: str) -> None:
+    assert path.as_uri() == uri
 
-    assert path.as_uri().startswith("file:///")
+
+@pytest.mark.parametrize(
+    "path",
+    [trio.PosixPath("relative/path"), trio.WindowsPath("relative/path")],
+)
+def test_as_uri_relative_path(path: trio.Path) -> None:
+    with pytest.raises(
+        ValueError,
+        match=r"^relative path can't be expressed as a file URI$",
+    ):
+        path.as_uri()
 
 
 async def test_iterdir(path: trio.Path) -> None:
