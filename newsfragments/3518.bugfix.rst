@@ -1,0 +1,5 @@
+Fixed :meth:`trio.Path.as_uri` on Python 3.14+, where changes to
+:meth:`pathlib.Path.as_uri` altered the error message for relative paths
+and the URI escaping rules. ``trio.Path.as_uri()`` now produces the same
+results as Python 3.13's :meth:`pathlib.PurePath.as_uri` on all supported
+Python versions.

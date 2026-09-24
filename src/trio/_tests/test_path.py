@@ -236,6 +236,27 @@ async def test_as_uri(path: trio.Path) -> None:
     assert path.as_uri().startswith("file:///")
 
 
+@pytest.mark.skipif(os.name == "nt", reason="OS is not posix")
+async def test_as_uri_escaping() -> None:
+    # as_uri() must keep Python 3.13's pathlib behavior on all versions,
+    # including Python 3.14+ where pathlib changed its escaping rules.
+    assert (
+        trio.Path("/tmp/foo bar/100%/baz#qux?.txt").as_uri()
+        == "file:///tmp/foo%20bar/100%25/baz%23qux%3F.txt"
+    )
+    assert (
+        trio.Path("/tmp/café/文件").as_uri()
+        == "file:///tmp/caf%C3%A9/%E6%96%87%E4%BB%B6"
+    )
+
+
+async def test_as_uri_relative_path() -> None:
+    with pytest.raises(
+        ValueError, match="relative path can't be expressed as a file URI"
+    ):
+        trio.Path("relative/path").as_uri()
+
+
 async def test_iterdir(path: trio.Path) -> None:
     # Populate a directory
     await path.mkdir()

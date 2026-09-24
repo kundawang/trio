@@ -16,6 +16,7 @@ from typing import (
     TypeVar,
     overload,
 )
+from urllib.parse import quote_from_bytes
 
 from trio._file_io import AsyncIOWrapper, wrap_file
 from trio._util import final
@@ -264,7 +265,28 @@ class Path(pathlib.PurePath):
         full_match = _wrap_method(pathlib.Path.full_match)
 
     def as_uri(self) -> str:
-        return self._wrapped_cls(self).as_uri()
+        # Implemented directly instead of delegating to pathlib, so that the
+        # result is consistent across Python versions. Python 3.14 changed
+        # pathlib's behavior (and deprecated PurePath.as_uri): the error
+        # message for relative paths and the escaping rules now differ.
+        # This matches pathlib.PurePath.as_uri() as of Python 3.13.
+        if not self.is_absolute():
+            raise ValueError("relative path can't be expressed as a file URI")
+
+        drive = self.drive
+        if len(drive) == 2 and drive[1] == ":":
+            # It's a path on a local drive => 'file:///c:/a/b'
+            prefix = "file:///" + drive
+            path = self.as_posix()[2:]
+        elif drive:
+            # It's a path on a network drive => 'file://host/share/a/b'
+            prefix = "file:"
+            path = self.as_posix()
+        else:
+            # It's a posix path => 'file:///etc/hosts'
+            prefix = "file://"
+            path = str(self)
+        return prefix + quote_from_bytes(os.fsencode(path))
 
 
 if Path.relative_to.__doc__:  # pragma: no branch
