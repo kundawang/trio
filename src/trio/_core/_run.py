@@ -2939,6 +2939,11 @@ def unrolled_run(
             ),
             stacklevel=1,
         )
+    except RuntimeWarning:
+        # A RuntimeWarning raised as an error (e.g. due to a warning filter
+        # with "error" action) inside the run loop is not an internal error,
+        # so let it propagate as-is instead of wrapping it.
+        raise
     except TrioInternalError:
         raise
     except BaseException as exc:

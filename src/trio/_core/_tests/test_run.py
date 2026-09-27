@@ -7,6 +7,7 @@ import sys
 import threading
 import time
 import types
+import warnings
 import weakref
 from contextlib import (
     AsyncExitStack,
@@ -31,7 +32,11 @@ from ...testing import (
     assert_checkpoints,
     wait_all_tasks_blocked,
 )
-from .._run import DEADLINE_HEAP_MIN_PRUNE_THRESHOLD, _count_context_run_tb_frames
+from .._run import (
+    DEADLINE_HEAP_MIN_PRUNE_THRESHOLD,
+    Runner,
+    _count_context_run_tb_frames,
+)
 from .tutil import (
     check_sequence_matches,
     create_asyncio_future_in_new_loop,
@@ -1067,6 +1072,38 @@ def test_error_in_run_loop() -> None:
     with ignore_coroutine_never_awaited_warnings():
         with pytest.raises(_core.TrioInternalError):
             _core.run(main)
+
+
+@restore_unraisablehook()
+def test_runtime_warning_in_run_loop_not_wrapped() -> None:
+    # A RuntimeWarning raised as an error inside the run loop (e.g. because
+    # of an "error" warning filter, which the trio test suite uses) is not an
+    # internal error and should propagate as-is, rather than being wrapped in
+    # a TrioInternalError.
+    real_task_exited = Runner.task_exited
+
+    def noisy_task_exited(
+        self: Runner,
+        task: _core.Task,
+        outcome: outcome.Outcome[object],
+    ) -> None:
+        if task is self.main_task:
+            warnings.warn(RuntimeWarning("boom in run loop"), stacklevel=1)
+        real_task_exited(self, task, outcome)
+
+    async def main() -> None:
+        await _core.checkpoint()
+
+    with (
+        mock.patch.object(Runner, "task_exited", noisy_task_exited),
+        pytest.raises(RuntimeWarning, match=r"^boom in run loop$"),
+    ):
+        _core.run(main)
+
+    # Because this crashes the run loop, various __del__ methods print
+    # complaints on stderr. Make sure they get run now, so the output is
+    # attached to this test.
+    gc_collect_harder()
 
 
 async def test_spawn_system_task() -> None:

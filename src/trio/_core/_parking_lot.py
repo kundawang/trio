@@ -71,7 +71,6 @@
 # See: https://github.com/python-trio/trio/issues/53
 from __future__ import annotations
 
-import inspect
 import math
 from collections import OrderedDict
 from typing import TYPE_CHECKING
@@ -94,10 +93,17 @@ GLOBAL_PARKING_LOT_BREAKER: dict[Task, list[ParkingLot]] = {}
 def add_parking_lot_breaker(task: Task, lot: ParkingLot) -> None:
     """Register a task as a breaker for a lot. See :meth:`ParkingLot.break_lot`.
 
-    raises:
+    Raises:
       trio.BrokenResourceError: if the task has already exited.
+        Note that a task whose coroutine object was permanently detached with
+        :func:`trio.lowlevel.permanently_detach_coroutine_object` counts as
+        exited, even though its coroutine object was never closed.
     """
-    if inspect.getcoroutinestate(task.coro) == inspect.CORO_CLOSED:
+    # The coroutine object of an exited task is usually, but not always,
+    # closed -- a task that permanently detached its coroutine object leaves
+    # it suspended. Checking that the task is still registered with its
+    # runner covers both cases.
+    if task not in task._runner.tasks:
         raise _core._exceptions.BrokenResourceError(
             "Attempted to add already exited task as lot breaker.",
         )
@@ -108,7 +114,11 @@ def add_parking_lot_breaker(task: Task, lot: ParkingLot) -> None:
 
 
 def remove_parking_lot_breaker(task: Task, lot: ParkingLot) -> None:
-    """Deregister a task as a breaker for a lot. See :meth:`ParkingLot.break_lot`"""
+    """Deregister a task as a breaker for a lot. See :meth:`ParkingLot.break_lot`.
+
+    Raises:
+      RuntimeError: if the task is not registered as a breaker for the lot.
+    """
     try:
         GLOBAL_PARKING_LOT_BREAKER[task].remove(lot)
     except (KeyError, ValueError):
@@ -285,6 +295,12 @@ class ParkingLot:
 
         The error raised contains a reference to the task sent as a parameter. The task
         is also saved in the parking lot in the ``broken_by`` attribute.
+
+        Args:
+          task (trio.lowlevel.Task | None): the task to record as having broken
+            the lot. If None, the current task is used. If the lot is already
+            broken, the task is appended to ``broken_by`` and nothing else
+            happens.
         """
         if task is None:
             task = _core.current_task()

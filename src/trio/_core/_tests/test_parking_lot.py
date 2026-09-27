@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from typing import TypeVar
 
+import outcome
 import pytest
 
 import trio
@@ -365,6 +366,68 @@ async def test_parking_lot_breaker_register_exited_task() -> None:
         match=r"^Attempted to add already exited task as lot breaker.$",
     ):
         add_parking_lot_breaker(child_task, lot)
+
+
+async def test_parking_lot_breaker_register_crashed_task() -> None:
+    """A task that exited with an exception counts as exited."""
+    lot = ParkingLot()
+    child_task: _core.Task | None = None
+
+    async def crasher(
+        task_status: _core.TaskStatus[_core.Task] = trio.TASK_STATUS_IGNORED,
+    ) -> None:
+        task_status.started(_core.current_task())
+        raise ValueError("oops")
+
+    with pytest.RaisesGroup(pytest.RaisesExc(ValueError, match="^oops$")):
+        async with trio.open_nursery() as nursery:
+            child_task = await nursery.start(crasher)
+    assert isinstance(child_task, _core.Task)
+    with pytest.raises(
+        trio.BrokenResourceError,
+        match=r"^Attempted to add already exited task as lot breaker.$",
+    ):
+        add_parking_lot_breaker(child_task, lot)
+
+
+async def test_parking_lot_breaker_register_detached_task() -> None:
+    """A task that permanently detached its coroutine object counts as exited,
+    even though its coroutine object is left suspended rather than closed."""
+    lot = ParkingLot()
+
+    async def detacher(
+        task_status: _core.TaskStatus[_core.Task] = trio.TASK_STATUS_IGNORED,
+    ) -> None:
+        task_status.started(_core.current_task())
+        await trio.lowlevel.permanently_detach_coroutine_object(
+            outcome.Value(None),
+        )
+
+    async with trio.open_nursery() as nursery:
+        child_task = await nursery.start(detacher)
+        await wait_all_tasks_blocked()
+        assert isinstance(child_task, _core.Task)
+        with pytest.raises(
+            trio.BrokenResourceError,
+            match=r"^Attempted to add already exited task as lot breaker.$",
+        ):
+            add_parking_lot_breaker(child_task, lot)
+        nursery.cancel_scope.cancel()
+
+
+def test_parking_lot_breaker_register_task_from_previous_run() -> None:
+    """A task from an earlier, finished trio.run counts as exited."""
+    lot = ParkingLot()
+
+    async def get_current_task() -> _core.Task:
+        return _core.current_task()
+
+    task = _core.run(get_current_task)
+    with pytest.raises(
+        trio.BrokenResourceError,
+        match=r"^Attempted to add already exited task as lot breaker.$",
+    ):
+        add_parking_lot_breaker(task, lot)
 
 
 async def test_parking_lot_break_itself() -> None:
